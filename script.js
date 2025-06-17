@@ -1,59 +1,64 @@
-const storage = firebase.storage();
-const db = firebase.firestore();
+// Configuración de Firebase (pegá tu config.js antes que esto)
+import { initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getStorage, ref, uploadBytes } from "firebase/storage";
+
+// Inicializar Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const storage = getStorage(app);
+
 let currentUser = null;
 
-// Autenticación anónima
-firebase.auth().signInAnonymously().then(cred => {
-  currentUser = cred.user;
-  console.log("Conectado como:", currentUser.uid);
-  mostrarArchivos();
-}).catch(err => {
-  console.error("Error de login:", err);
+// Iniciar sesión anónima
+signInAnonymously(auth)
+  .then(() => {
+    console.log("✅ Sesión anónima iniciada");
+  })
+  .catch((error) => {
+    console.error("❌ Error de login:", error);
+  });
+
+// Esperar al usuario
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    currentUser = user;
+    console.log("👤 Usuario:", currentUser.uid);
+  } else {
+    console.warn("⚠️ No se encontró usuario");
+  }
 });
 
-// Subir carpeta completa
+// Subida de carpeta
 async function uploadFolder() {
   const input = document.getElementById("folderInput");
   const files = input.files;
-  if (files.length === 0) return;
 
-  const folderId = Date.now().toString(36);
-  const uploadPromises = [];
-
-  for (let file of files) {
-    const fullPath = `${currentUser.uid}/${folderId}/${file.webkitRelativePath}`;
-    const ref = storage.ref(fullPath);
-    uploadPromises.push(ref.put(file));
+  if (!files.length) {
+    alert("Seleccioná una carpeta primero.");
+    return;
   }
 
-  await Promise.all(uploadPromises);
+  if (!currentUser) {
+    alert("Error: usuario no autenticado.");
+    return;
+  }
 
-  await db.collection("users").doc(currentUser.uid)
-    .collection("folders").doc(folderId)
-    .set({ createdAt: Date.now() });
+  const uid = currentUser.uid;
+  const folderCode = Math.random().toString(36).substring(2, 10); // Código único
 
-  alert("¡Carpeta subida con éxito!");
-  mostrarArchivos();
-}
+  for (const file of files) {
+    const pathInFolder = file.webkitRelativePath || file.name;
+    const storagePath = `${uid}/${folderCode}/${pathInFolder}`;
+    const fileRef = ref(storage, storagePath);
 
-// Mostrar archivos subidos
-async function mostrarArchivos() {
-  const list = document.getElementById("fileList");
-  list.innerHTML = "";
-
-  const folders = await db.collection("users")
-    .doc(currentUser?.uid).collection("folders").get();
-
-  for (let folder of folders.docs) {
-    const folderId = folder.id;
-    const folderRef = storage.ref(`${currentUser.uid}/${folderId}`);
-    const contents = await folderRef.listAll();
-
-    for (let item of contents.items) {
-      const url = await item.getDownloadURL();
-      const li = document.createElement("li");
-      li.innerHTML = `<a href="${url}" target="_blank">${item.name}</a>`;
-      list.appendChild(li);
+    try {
+      const result = await uploadBytes(fileRef, file);
+      console.log("📁 Subido:", result.metadata.fullPath);
+    } catch (err) {
+      console.error("❌ Error al subir", file.name, err);
     }
   }
+
+  alert("✅ Carpeta subida con código: " + folderCode);
 }
